@@ -1,0 +1,9 @@
+../App/Src/nmea_parser.c:4:13:is_digit	3
+../App/Src/nmea_parser.c:6:12:hex_val	7
+../App/Src/nmea_parser.c:14:6:nmea_line_feed	6
+../App/Src/nmea_parser.c:33:6:nmea_verify_checksum	8
+../App/Src/nmea_parser.c:49:12:split_fields	4
+../App/Src/nmea_parser.c:63:13:parse_2digits	3
+../App/Src/nmea_parser.c:71:13:parse_coord	15
+../App/Src/nmea_parser.c:104:13:parse_fixed2	8
+../App/Src/nmea_parser.c:121:6:nmea_parse_rmc	18
