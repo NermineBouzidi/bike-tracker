@@ -21,7 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "nmea_parser.h"
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,7 +58,9 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
 uint8_t gps_byte;   // the byte just received from the GPS
-
+static NmeaLine_t nmea_line;
+static char ready_line[NMEA_MAX_LEN];
+static volatile uint8_t line_ready = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -130,7 +134,30 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  /* USER CODE BEGIN 3 */
+	  if (line_ready)
+	  {
+	    GpsData_t gps;
+	    char out[128];
+	    int n = 0;
+
+	    if (nmea_parse_rmc(ready_line, &gps))
+	    {
+	      n = snprintf(out, sizeof(out),
+	                   "FIX %02u:%02u:%02u %02u/%02u/%u lat=%ld lon=%ld v=%u\r\n",
+	                   gps.hour, gps.minute, gps.second, gps.day, gps.month, gps.year,
+	                   (long)gps.lat_e6, (long)gps.lon_e6, gps.speed_dkmh);
+	    }
+	    else if (strncmp(ready_line + 3, "RMC", 3) == 0)
+	    {
+	      n = snprintf(out, sizeof(out), "NO FIX\r\n");
+	    }
+
+	    line_ready = 0;
+	    if (n > 0) HAL_UART_Transmit(&huart1, (uint8_t *)out, (uint16_t)n, 100);
+	  }
   }
+
   /* USER CODE END 3 */
 }
 
@@ -683,9 +710,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == UART4)
   {
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);                // LED2 blinks
-    HAL_UART_Transmit(&huart1, &gps_byte, 1, 10);          // forward to PC
-    HAL_UART_Receive_IT(&huart4, &gps_byte, 1);            // listen for the next byte
+    if (nmea_line_feed(&nmea_line, (char)gps_byte) && !line_ready)
+    {
+      strcpy(ready_line, nmea_line.buf);
+      line_ready = 1;
+    }
+    HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
   }
 }
 
