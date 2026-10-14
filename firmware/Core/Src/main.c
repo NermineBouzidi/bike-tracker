@@ -24,6 +24,10 @@
 #include "nmea_parser.h"
 #include <stdio.h>
 #include <string.h>
+#include "hci.h"
+#include "hci_tl.h"
+#include "hci_tl_interface.h"
+#include "bluenrg_utils.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -72,7 +76,7 @@ static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_UART4_Init(void);
 /* USER CODE BEGIN PFP */
-
+void user_notify(void *pData);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -119,7 +123,14 @@ int main(void)
   /* USER CODE BEGIN 2 */
   const char msg[] = "Bike Tracker: boot OK\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg) - 1, 100);
-
+  uint8_t  hw_ver = 0;
+  uint16_t fw_ver = 0;
+  hci_init(user_notify, NULL);                      /* reset + start the stack */
+  uint8_t ble_st = getBlueNRGVersion(&hw_ver, &fw_ver);
+  char vbuf[64];
+  int vn = snprintf(vbuf, sizeof(vbuf), "BlueNRG hw=%u fw=%u status=%u\r\n",
+                    hw_ver, fw_ver, (unsigned)ble_st);
+  HAL_UART_Transmit(&huart1, (uint8_t *)vbuf, (uint16_t)vn, 100);
   HAL_UART_Receive_IT(&huart4, &gps_byte, 1);   // start listening to the GPS
   /* USER CODE END 2 */
 
@@ -130,7 +141,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  /* USER CODE BEGIN 3 */
+	  hci_user_evt_proc();      /* lets the stack process events from the module */
 	  if (line_ready)
 	  {
 	    GpsData_t gps;
@@ -152,9 +163,10 @@ int main(void)
 	    line_ready = 0;
 	    if (n > 0) HAL_UART_Transmit(&huart1, (uint8_t *)out, (uint16_t)n, 100);
 	  }
+	  /* USER CODE END 3 */
+
   }
 
-  /* USER CODE END 3 */
 }
 
 /**
@@ -680,6 +692,18 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   if (huart->Instance == UART4)
   {
     HAL_UART_Receive_IT(&huart4, &gps_byte, 1);            // restart after an error
+  }
+}
+void user_notify(void *pData)
+{
+  (void)pData;            /* BLE events are handled here later */
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_6)      /* IRQ line of the BLE module */
+  {
+    hci_tl_lowlevel_isr();
   }
 }
 /* USER CODE END 4 */
