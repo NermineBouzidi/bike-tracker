@@ -1,0 +1,2 @@
+../BlueNRG_MS/Target/hci_tl_interface_template.c:21:6:hci_tl_lowlevel_init	1
+../BlueNRG_MS/Target/hci_tl_interface_template.c:41:6:hci_tl_lowlevel_isr	1
