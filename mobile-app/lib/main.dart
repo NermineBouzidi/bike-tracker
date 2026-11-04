@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'core/app_theme.dart';
-import 'presentation/screens/sign_in_screen.dart';
+import 'presentation/screens/splash_screen.dart';
+// remove the sign_in_screen.dart import if it is now unused
 
+      
 void main() => runApp(const BikeTrackerApp());
 
 class BikeTrackerApp extends StatelessWidget {
@@ -13,7 +15,7 @@ class BikeTrackerApp extends StatelessWidget {
       title: 'Bike Tracker',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      home: const SignInScreen(),
+      home: const SplashScreen(),
     );
   }
 }
