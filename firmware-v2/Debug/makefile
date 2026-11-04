@@ -66,8 +66,8 @@ all: main-build
 main-build: bike_tracker_fw-v2.elf secondary-outputs
 
 # Tool invocations
-bike_tracker_fw-v2.elf bike_tracker_fw-v2.map: $(OBJS) $(USER_OBJS) C:\Users\nermi\STM32CubeIDE\workspace_1.19.0\bike_tracker_fw-v2\STM32L475VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "bike_tracker_fw-v2.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\nermi\STM32CubeIDE\workspace_1.19.0\bike_tracker_fw-v2\STM32L475VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="bike_tracker_fw-v2.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+bike_tracker_fw-v2.elf bike_tracker_fw-v2.map: $(OBJS) $(USER_OBJS) C:\Users\nermi\Documents\Projects-3ISEOC\bike-tracker\firmware-v2\STM32L475VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "bike_tracker_fw-v2.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\nermi\Documents\Projects-3ISEOC\bike-tracker\firmware-v2\STM32L475VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="bike_tracker_fw-v2.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
