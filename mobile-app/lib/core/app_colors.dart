@@ -8,4 +8,6 @@ class AppColors {
   static const muted = Color(0xFF6B7190);
   static const border = Color(0xFFE2E5F0);
   static const error = Color(0xFFD93B4B);
+  static const Color lime = Color(0xFFB4FF00);
+static const Color black = Color(0xFF000000);
 }
