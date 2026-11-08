@@ -2,15 +2,21 @@ import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
 import '../widgets/auth_text_field.dart';
 import 'sign_up_screen.dart';
+import 'main_shell.dart';
+import '../widgets/bike_ui.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/api/api_exception.dart';
+import '../providers/auth_provider.dart';
+import 'verify_email_screen.dart';
 
-class SignInScreen extends StatefulWidget {
+class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({super.key});
 
   @override
-  State<SignInScreen> createState() => _SignInScreenState();
+  ConsumerState<SignInScreen> createState() => _SignInScreenState();
 }
 
-class _SignInScreenState extends State<SignInScreen> {
+class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
@@ -23,19 +29,38 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+    Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-    await Future.delayed(const Duration(seconds: 1)); // demo only
-    if (!mounted) return;
-    setState(() => _loading = false);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Signed in (demo)')));
+    final email = _email.text.trim();
+    try {
+      await ref
+          .read(authRepositoryProvider)
+          .login(email: email, password: _password.text);
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MainShell()),
+        (route) => false,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'EMAIL_NOT_VERIFIED') {
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) =>
+                VerifyEmailScreen(email: email, sendCodeOnOpen: true)));
+        return;
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: BT.panel2,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -47,17 +72,26 @@ class _SignInScreenState extends State<SignInScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.pedal_bike,
-                        size: 56, color: AppColors.primary),
+                    Center(
+                      child: Image.asset(
+                        'assets/images/logo.jpg',
+                        height: 90,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.pedal_bike,
+                          size: 56,
+                          color: AppColors.lime,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 24),
                     const Text('Welcome back',
                         style: TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w800,
-                            color: AppColors.text)),
+                            color: Colors.black)),
                     const SizedBox(height: 8),
                     const Text('Sign in to see your rides.',
-                        style: TextStyle(fontSize: 16, color: AppColors.muted)),
+                        style: TextStyle(fontSize: 16, color: Colors.black54)),
                     const SizedBox(height: 32),
                     AuthTextField(
                       label: 'Email',
@@ -85,18 +119,31 @@ class _SignInScreenState extends State<SignInScreen> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
+                        style: TextButton.styleFrom(
+                            foregroundColor: Colors.black),
                         onPressed: () {}, // forgot password: later
                         child: const Text('Forgot password?'),
                       ),
                     ),
                     const SizedBox(height: 8),
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.lime,
+                        foregroundColor: AppColors.black,
+                        disabledBackgroundColor:
+                            AppColors.lime.withOpacity(0.6),
+                        minimumSize: const Size.fromHeight(54),
+                        shape: const StadiumBorder(),
+                        textStyle: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700),
+                      ),
                       onPressed: _loading ? null : _submit,
                       child: _loading
                           ? const SizedBox(
                               width: 22,
                               height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2.5))
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.5, color: AppColors.black))
                           : const Text('Sign in'),
                     ),
                     const SizedBox(height: 24),
@@ -104,8 +151,10 @@ class _SignInScreenState extends State<SignInScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const Text('New here?',
-                            style: TextStyle(color: AppColors.muted)),
+                            style: TextStyle(color: Colors.black54)),
                         TextButton(
+                          style: TextButton.styleFrom(
+                              foregroundColor: Colors.black),
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(
                                 builder: (_) => const SignUpScreen()),

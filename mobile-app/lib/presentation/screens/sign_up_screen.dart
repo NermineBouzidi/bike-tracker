@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
 import '../widgets/auth_text_field.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/api/api_exception.dart';
+import '../providers/auth_provider.dart';
+import 'verify_email_screen.dart';
 
-class SignUpScreen extends StatefulWidget {
+class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
   @override
-  State<SignUpScreen> createState() => _SignUpScreenState();
+  ConsumerState<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> {
+class _SignUpScreenState extends ConsumerState<SignUpScreen> {
+
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _email = TextEditingController();
@@ -28,22 +33,43 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+    Future<void> _submit() async {
     final valid = _formKey.currentState!.validate();
     setState(() => _showTermsError = !_accepted);
     if (!valid || !_accepted) return;
     setState(() => _loading = true);
-    await Future.delayed(const Duration(seconds: 1)); // demo only
-    if (!mounted) return;
-    setState(() => _loading = false);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Account created (demo)')));
+    final email = _email.text.trim();
+    try {
+      final emailSent = await ref.read(authRepositoryProvider).register(
+            name: _name.text.trim(),
+            email: email,
+            password: _password.text,
+          );
+      if (!mounted) return;
+      if (!emailSent) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("We couldn't send the email. Try Resend in a minute.")));
+      }
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => VerifyEmailScreen(email: email)));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+      backgroundColor: const Color(0xFFF1EFE4), // ✅ Fond beige
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black), // ✅ Icône retour noire
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -55,14 +81,27 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Center(
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        height: 80,
+                        color: Colors.black, // ✅ Logo en noir (si c'est un logo simple)
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.pedal_bike,
+                          size: 56,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     const Text('Create account',
                         style: TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w800,
-                            color: AppColors.text)),
+                            color: Colors.black)), // ✅ Texte noir
                     const SizedBox(height: 8),
                     const Text('One minute and you are riding.',
-                        style: TextStyle(fontSize: 16, color: AppColors.muted)),
+                        style: TextStyle(fontSize: 16, color: Colors.black54)), // ✅ Texte gris foncé
                     const SizedBox(height: 28),
                     AuthTextField(
                       label: 'Full name',
@@ -108,6 +147,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     const SizedBox(height: 8),
                     CheckboxListTile(
                       value: _accepted,
+                      activeColor: AppColors.lime,
+                      checkColor: Colors.black,
+                      side: const BorderSide(color: Colors.black54, width: 1.5), // ✅ Bordure noire
                       onChanged: (v) => setState(() {
                         _accepted = v ?? false;
                         _showTermsError = false;
@@ -115,7 +157,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                       title: const Text(
-                          'I agree to the Terms and the Privacy Policy.'),
+                        'I agree to the Terms and the Privacy Policy.',
+                        style: TextStyle(color: Colors.black54), // ✅ Texte noir
+                      ),
                     ),
                     if (_showTermsError)
                       const Padding(
@@ -125,12 +169,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       ),
                     const SizedBox(height: 8),
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.lime,
+                        foregroundColor: Colors.black,
+                        disabledBackgroundColor:
+                            AppColors.lime.withOpacity(0.6),
+                        minimumSize: const Size.fromHeight(54),
+                        shape: const StadiumBorder(),
+                        textStyle: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700),
+                      ),
                       onPressed: _loading ? null : _submit,
                       child: _loading
                           ? const SizedBox(
                               width: 22,
                               height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2.5))
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.5, color: Colors.black))
                           : const Text('Create account'),
                     ),
                   ],

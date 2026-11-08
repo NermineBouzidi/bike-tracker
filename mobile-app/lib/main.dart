@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'core/app_theme.dart';
 import 'presentation/screens/splash_screen.dart';
-// remove the sign_in_screen.dart import if it is now unused
+import 'presentation/screens/main_shell.dart';
+import 'presentation/widgets/bike_ui.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-      
-void main() => runApp(const BikeTrackerApp());
+void main() => runApp(const ProviderScope(child: BikeTrackerApp()));
 
 class BikeTrackerApp extends StatelessWidget {
   const BikeTrackerApp({super.key});
@@ -12,10 +13,15 @@ class BikeTrackerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bike Tracker',
+      title: 'BikeTrack',
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(),
+      theme: buildAppTheme().copyWith(
+        scaffoldBackgroundColor: BT.bg,
+      ),
       home: const SplashScreen(),
+      routes: {
+        '/home': (_) => const MainShell(),
+      },
     );
   }
 }
