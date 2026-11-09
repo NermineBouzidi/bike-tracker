@@ -22,6 +22,7 @@ C_DEPS :=
 
 # Every subdirectory with source files must be described here
 SUBDIRS := \
+App/Src \
 BlueNRG_MS/Target \
 Core/Src \
 Core/Startup \
