@@ -45,7 +45,6 @@ bool nmea_verify_checksum(const char *s)
     return cs == (uint8_t)((hi << 4) | lo);
 }
 
-/* Splits a line on ',' and keeps empty fields (needed when there is no fix) */
 static int split_fields(char *s, char *fields[], int max)
 {
     int n = 0;
@@ -67,7 +66,6 @@ static bool parse_2digits(const char *s, uint8_t *out)
     return true;
 }
 
-/* "ddmm.mmmm" or "dddmm.mmmm" -> degrees x 1e6 */
 static bool parse_coord(const char *f, char hemi, int deg_digits, int32_t *out)
 {
     if (strlen(f) < (size_t)deg_digits + 3) return false;
@@ -100,7 +98,6 @@ static bool parse_coord(const char *f, char hemi, int deg_digits, int32_t *out)
     return true;
 }
 
-/* "12.34" -> 1234 (two decimals) */
 static bool parse_fixed2(const char *f, uint32_t *out)
 {
     uint32_t ip = 0, fp = 0;
@@ -138,8 +135,7 @@ bool nmea_parse_rmc(const char *line, GpsData_t *out)
     int n = split_fields(buf, f, 16);
     if (n < 10) return false;
 
-    /* f[1]=time f[2]=status f[3]=lat f[4]=N/S f[5]=lon f[6]=E/W f[7]=speed f[9]=date */
-    if (f[2][0] != 'A') return false;      /* V = no fix */
+    if (f[2][0] != 'A') return false;
 
     GpsData_t d = {0};
 
@@ -157,7 +153,7 @@ bool nmea_parse_rmc(const char *line, GpsData_t *out)
 
     uint32_t knots_e2;
     if (!parse_fixed2(f[7], &knots_e2)) return false;
-    d.speed_dkmh = (uint16_t)((knots_e2 * 1852u) / 10000u);   /* knots to 0.1 km/h */
+    d.speed_dkmh = (uint16_t)((knots_e2 * 1852u) / 10000u);
 
     d.valid = true;
     *out = d;

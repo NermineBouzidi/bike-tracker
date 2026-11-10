@@ -31,6 +31,9 @@
 #include "bluenrg_gatt_aci.h"
 #include "bluenrg_hal_aci.h"
 #include "bluenrg_utils.h"
+#include "nmea_parser.h"
+#include "record.h"
+#include "track.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,7 +43,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SIMULATE_GPS 0   /* 1 = FAKE moving position for indoor tests. Keep 0 for real use. */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,9 +57,13 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t gps_byte;
-uint16_t gpsServHandle, gpsCharHandle;
+uint16_t gpsServHandle, gpsCharHandle, distCharHandle;
 volatile uint8_t ble_connected = 0;
 uint16_t ble_conn_handle = 0;
+static NmeaLine_t nmea_line;
+static char ready_line[NMEA_MAX_LEN];
+static volatile uint8_t line_ready = 0;
+static Track_t trk;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,7 +75,9 @@ static void MX_USART1_UART_Init(void);
 void user_notify(void *pData);
 void HCI_Event_CB(void *pData);
 static void BLE_Setup(void);
-static void BLE_SendPosition(int32_t lat, int32_t lon);
+static void BLE_SendRecord(const GpsRecord_t *r);
+static void BLE_SendDistance(uint32_t meters);
+static void process_fix(const GpsData_t *gps);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -126,21 +135,62 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
-	    /* USER CODE BEGIN 3 */
-	    hci_user_evt_proc();
+    /* USER CODE BEGIN 3 */
+    hci_user_evt_proc();
 
-	    static uint32_t t_last = 0;
-	    static int32_t  lat = 36800000, lon = 10180000;
-	    if (ble_connected && (HAL_GetTick() - t_last) > 2000)
-	    {
-	      t_last = HAL_GetTick();
-	      lat += 10;
-	      lon += 10;
-	      BLE_SendPosition(lat, lon);
-	    }
-	  }
-	  /* USER CODE END 3 */
-	}
+    static uint32_t last_fix_tick = 0;
+
+    /* A complete NMEA line arrived from the GPS */
+    if (line_ready)
+    {
+      GpsData_t gps;
+
+      if (nmea_parse_rmc(ready_line, &gps))
+      {
+        process_fix(&gps);
+        last_fix_tick = HAL_GetTick();
+      }
+      else if (strncmp(ready_line + 3, "RMC", 3) == 0)
+      {
+        const char nf[] = "NO FIX\r\n";
+        HAL_UART_Transmit(&huart1, (uint8_t *)nf, sizeof(nf) - 1, 100);
+      }
+      line_ready = 0;
+    }
+
+    /* Signal lost for 5 s: restart the path so no phantom distance is added */
+    if (trk.have && (HAL_GetTick() - last_fix_tick) > 5000)
+    {
+      track_lost(&trk);
+    }
+
+#if SIMULATE_GPS
+    /* FAKE data for indoor tests only: moves about 10 m north every second */
+    {
+      static uint32_t t_sim = 0;
+      static int32_t  sim_lat = 36800000;
+      if ((HAL_GetTick() - t_sim) >= 1000)
+      {
+        t_sim = HAL_GetTick();
+        sim_lat += 90;
+        GpsData_t g = {0};
+        uint32_t s = HAL_GetTick() / 1000u;
+        g.valid = true;
+        g.year = 2026; g.month = 11; g.day = 9;
+        g.hour = (uint8_t)((s / 3600u) % 24u);
+        g.minute = (uint8_t)((s / 60u) % 60u);
+        g.second = (uint8_t)(s % 60u);
+        g.lat_e6 = sim_lat;
+        g.lon_e6 = 10180000;
+        g.speed_dkmh = 360;               /* 36 km/h */
+        process_fix(&g);
+        last_fix_tick = HAL_GetTick();
+      }
+    }
+#endif
+    /* USER CODE END 3 */
+  }
+}
 
 /**
   * @brief System Clock Configuration
@@ -382,7 +432,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == UART4)
   {
-    HAL_UART_Transmit(&huart1, &gps_byte, 1, 10);
+    if (nmea_line_feed(&nmea_line, (char)gps_byte) && !line_ready)
+    {
+      strcpy(ready_line, nmea_line.buf);
+      line_ready = 1;
+      // --- ADD THIS LINE HERE ---
+      printf("RAW GPS: %s\r\n", ready_line);
+    }
     HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
   }
 }
@@ -399,9 +455,29 @@ void user_notify(void *pData)
 {
   HCI_Event_CB(pData);
 }
+
+/* ---------- One valid GPS fix: record, distance, BLE, log ---------- */
+static void process_fix(const GpsData_t *gps)
+{
+  GpsRecord_t rec;
+  char out[128];
+
+  record_make(gps, &rec);
+  track_update(&trk, gps);
+  BLE_SendRecord(&rec);
+  BLE_SendDistance((uint32_t)trk.total_m);
+
+  int n = snprintf(out, sizeof(out),
+                   "FIX ts=%lu lat=%ld lon=%ld v=%u d=%lum\r\n",
+                   (unsigned long)rec.ts, (long)rec.lat_e6, (long)rec.lon_e6,
+                   rec.speed_dkmh, (unsigned long)trk.total_m);
+  if (n > 0) HAL_UART_Transmit(&huart1, (uint8_t *)out, (uint16_t)n, 100);
+}
+
 /* ---------- BLE application ---------- */
 static const uint8_t GPS_SERV_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe0,0xf2,0x73,0xd9};
 static const uint8_t GPS_CHAR_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe1,0xf2,0x73,0xd9};
+static const uint8_t DIST_CHAR_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe2,0xf2,0x73,0xd9};
 
 static void BLE_StartAdvertising(void)
 {
@@ -419,7 +495,7 @@ static void BLE_StartAdvertising(void)
 static void BLE_Setup(void)
 {
   uint16_t gap_serv, dev_name, appearance;
-  char txt[48];
+  char txt[64];
 
   uint8_t bdaddr[6] = {0x01,0x02,0x03,0x04,0x05,0xC0};
   aci_hal_write_config_data(0x00, 6, bdaddr);
@@ -427,22 +503,28 @@ static void BLE_Setup(void)
   aci_gap_init_IDB05A1(GAP_PERIPHERAL_ROLE_IDB05A1, 0, 12, &gap_serv, &dev_name, &appearance);
   aci_gatt_update_char_value(gap_serv, dev_name, 0, 11, (uint8_t *)"BikeTracker");
 
-  tBleStatus s1 = aci_gatt_add_serv(UUID_TYPE_128, GPS_SERV_UUID, PRIMARY_SERVICE, 4, &gpsServHandle);
-  tBleStatus s2 = aci_gatt_add_char(gpsServHandle, UUID_TYPE_128, GPS_CHAR_UUID, 8,
+  /* 7 attributes: 1 service + 3 for the record characteristic + 3 for the distance one */
+  tBleStatus s1 = aci_gatt_add_serv(UUID_TYPE_128, GPS_SERV_UUID, PRIMARY_SERVICE, 7, &gpsServHandle);
+  tBleStatus s2 = aci_gatt_add_char(gpsServHandle, UUID_TYPE_128, GPS_CHAR_UUID, 16,
                                     CHAR_PROP_NOTIFY | CHAR_PROP_READ, ATTR_PERMISSION_NONE,
                                     GATT_DONT_NOTIFY_EVENTS, 16, 0, &gpsCharHandle);
+  tBleStatus s3 = aci_gatt_add_char(gpsServHandle, UUID_TYPE_128, DIST_CHAR_UUID, 4,
+                                    CHAR_PROP_NOTIFY | CHAR_PROP_READ, ATTR_PERMISSION_NONE,
+                                    GATT_DONT_NOTIFY_EVENTS, 16, 0, &distCharHandle);
   BLE_StartAdvertising();
 
-  snprintf(txt, sizeof(txt), "BLE ready: serv=%02X char=%02X\r\n", s1, s2);
+  snprintf(txt, sizeof(txt), "BLE ready: serv=%02X rec=%02X dist=%02X\r\n", s1, s2, s3);
   HAL_UART_Transmit(&huart1, (uint8_t *)txt, strlen(txt), 100);
 }
 
-static void BLE_SendPosition(int32_t lat, int32_t lon)
+static void BLE_SendRecord(const GpsRecord_t *r)
 {
-  uint8_t buf[8];
-  memcpy(&buf[0], &lat, 4);
-  memcpy(&buf[4], &lon, 4);
-  aci_gatt_update_char_value(gpsServHandle, gpsCharHandle, 0, 8, buf);
+  aci_gatt_update_char_value(gpsServHandle, gpsCharHandle, 0, 16, (uint8_t *)r);
+}
+
+static void BLE_SendDistance(uint32_t meters)
+{
+  aci_gatt_update_char_value(gpsServHandle, distCharHandle, 0, 4, (uint8_t *)&meters);
 }
 
 void HCI_Event_CB(void *pData)

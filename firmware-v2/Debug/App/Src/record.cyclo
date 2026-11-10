@@ -1,0 +1,6 @@
+../App/Src/record.c:4:17:crc16	4
+../App/Src/record.c:15:16:days_from_civil	3
+../App/Src/record.c:25:10:record_unix_time	1
+../App/Src/record.c:31:6:record_make	1
+../App/Src/record.c:40:6:record_valid	1
+../App/Src/record.c:45:6:record_is_erased	3
