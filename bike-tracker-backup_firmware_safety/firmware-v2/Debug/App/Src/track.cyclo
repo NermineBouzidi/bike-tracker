@@ -1,0 +1,3 @@
+../App/Src/track.c:9:14:haversine_m	2
+../App/Src/track.c:20:6:track_update	4
+../App/Src/track.c:31:6:track_lost	1

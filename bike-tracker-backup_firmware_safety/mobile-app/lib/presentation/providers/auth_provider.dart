@@ -1,0 +1,14 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/api/api_client.dart';
+import '../../data/auth/auth_repository.dart';
+import '../../data/auth/token_storage.dart';
+
+final tokenStorageProvider = Provider<TokenStorage>((ref) => TokenStorage());
+
+final apiClientProvider =
+    Provider<ApiClient>((ref) => ApiClient(ref.watch(tokenStorageProvider)));
+
+final authRepositoryProvider = Provider<AuthRepository>((ref) => AuthRepository(
+      ref.watch(apiClientProvider),
+      ref.watch(tokenStorageProvider),
+    ));

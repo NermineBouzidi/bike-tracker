@@ -1,0 +1,3 @@
+../App/Src/rtc_time.c:7:9:RTC_IsSet	1
+../App/Src/rtc_time.c:12:6:RTC_SetFromGps	5
+../App/Src/rtc_time.c:34:10:RTC_GetUnix	2

@@ -1,0 +1,9 @@
+../App/Src/power.c:24:26:lsm_wr	1
+../App/Src/power.c:30:6:Motion_Init	1
+../App/Src/power.c:48:6:Motion_FromISR	1
+../App/Src/power.c:54:6:Motion_TakeEvent	2
+../App/Src/power.c:61:10:Motion_IdleMs	1
+../App/Src/power.c:65:13:ubx_send	3
+../App/Src/power.c:78:6:GPS_PowerOff	1
+../App/Src/power.c:90:6:GPS_PowerOn	1
+../App/Src/power.c:102:6:Power_EnterStop2	1
