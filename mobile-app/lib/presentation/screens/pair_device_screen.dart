@@ -1,22 +1,19 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import '../widgets/bike_ui.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import '../../data/ble/bike_connection.dart';
 
-const Color _lime = Color(0xFFB4FF39);
+// Same soft palette as the other screens
+const Color _bgTop = Color(0xFFF4F8EE);
+const Color _bgBottom = Color(0xFFDDE9D1);
+const Color _ink = Color(0xFF1E2B1C);
+const Color _muted = Color(0xFF6F7D6A);
+const Color _sage = Color(0xFFBFD4AC);
+const Color _accent = Color(0xFFB6E35C);
+const Color _danger = Color(0xFFD64545);
 
-class _Tracker {
-  const _Tracker(this.name, this.rssi, this.quality, this.bars, this.icon,
-      {this.mac, this.battery, this.distance, this.weak = false});
-  final String name;
-  final int rssi;
-  final String quality;
-  final int bars;
-  final IconData icon;
-  final String? mac;
-  final int? battery;
-  final String? distance;
-  final bool weak;
-}
-
+/// Scans for nearby BLE devices and pairs the chosen one.
+/// Pops `true` when the bike is paired and connected.
 class PairDeviceScreen extends StatefulWidget {
   const PairDeviceScreen({super.key});
 
@@ -25,379 +22,569 @@ class PairDeviceScreen extends StatefulWidget {
 }
 
 class _PairDeviceScreenState extends State<PairDeviceScreen> {
-  bool _scanning = true;
-  String? _connecting = 'BikeTrack Pro #8492';
+  final _conn = BikeConnection.instance;
 
-  // TODO: replace with real BLE scan results (flutter_blue_plus).
-  static const _found = [
-    _Tracker('BikeTrack Pro #8492', -42, 'Excellent', 4, Icons.directions_bike,
-        mac: 'C4:7D:E2:84:92:01', battery: 94, distance: '< 1.2 m'),
-    _Tracker('BikeTrack Core #1042', -68, 'Good', 2, Icons.pedal_bike),
-    _Tracker('BT-Beacon_Guest', -89, 'Weak', 1, Icons.cell_tower, weak: true),
-  ];
+  StreamSubscription<List<ScanResult>>? _resultsSub;
+  StreamSubscription<bool>? _scanningSub;
+  List<ScanResult> _results = [];
+  bool _scanning = false;
+  String? _connectingId;
 
-  void _scan() async {
-    setState(() => _scanning = true);
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted) setState(() => _scanning = false);
+  @override
+  void initState() {
+    super.initState();
+    _resultsSub = FlutterBluePlus.scanResults.listen((list) {
+  debugPrint('BLE: ${list.length} devices detected');
+
+  for (final r in list) {
+    debugPrint(
+      'DEVICE: '
+      'Name=${r.advertisementData.advName}, '
+      'PlatformName=${r.device.platformName}, '
+      'ID=${r.device.remoteId}, '
+      'RSSI=${r.rssi}, '
+      'Services=${r.advertisementData.serviceUuids}',
+    );
   }
 
-  void _connect(_Tracker t) async {
-    setState(() => _connecting = t.name);
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-    setState(() => _connecting = null);
-    Navigator.of(context).pop(t.name);
+  if (mounted) {
+    setState(() => _results = list);
+  }
+}, onError: (e) {
+  debugPrint('BLE RESULTS ERROR: $e');
+});
+    _scanningSub = FlutterBluePlus.isScanning.listen((s) {
+      if (mounted) setState(() => _scanning = s);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scan());
   }
 
   @override
+  void dispose() {
+    _resultsSub?.cancel();
+    _scanningSub?.cancel();
+    FlutterBluePlus.stopScan();
+    super.dispose();
+  }
+
+  Future<void> _scan() async {
+    if (_scanning || _connectingId != null) return;
+    await _conn.startScan(); // asks the permission, checks Bluetooth is on
+  }
+
+  Future<void> _pair(ScanResult r) async {
+    setState(() => _connectingId = r.device.remoteId.str);
+    await _conn.pair(r.device, name: _nameOf(r));
+    if (!mounted) return;
+    if (_conn.link == BikeLink.connected) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() => _connectingId = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not connect. Move closer and try again.'),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- helpers
+
+  static String _nameOf(ScanResult r) => r.advertisementData.advName.isNotEmpty
+      ? r.advertisementData.advName
+      : (r.device.platformName.isNotEmpty
+          ? r.device.platformName
+          : 'Unnamed device (${r.device.remoteId.str.replaceAll(':', '').substring(r.device.remoteId.str.replaceAll(':', '').length - 4)})');
+
+  static bool _looksLikeTracker(ScanResult r) {
+    final n = _nameOf(r).toLowerCase();
+    if (n.contains('bike') || n.contains('track')) return true;
+    // The firmware's services start with d973f2e.
+    return r.advertisementData.serviceUuids
+        .any((u) => u.str128.toLowerCase().startsWith('d973f2e'));
+  }
+
+  static int _bars(int rssi) =>
+      rssi > -60 ? 4 : (rssi > -70 ? 3 : (rssi > -80 ? 2 : 1));
+
+  static String _quality(int rssi) => rssi > -60
+      ? 'Excellent'
+      : (rssi > -70 ? 'Good' : (rssi > -80 ? 'Fair' : 'Weak'));
+
+  /// Every device, likely trackers first, then the strongest signal.
+  List<ScanResult> get _visible {
+    final list = _results.toList();
+    list.sort((a, b) {
+      final ta = _looksLikeTracker(a) ? 0 : 1;
+      final tb = _looksLikeTracker(b) ? 0 : 1;
+      if (ta != tb) return ta - tb;
+      return b.rssi.compareTo(a.rssi);
+    });
+    return list;
+  }
+
+  // ------------------------------------------------------------------ build
+
+  @override
   Widget build(BuildContext context) {
+    final devices = _visible;
+
     return Scaffold(
-      backgroundColor: BT.bg,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-          children: [
-            // Header
-            Row(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_bgTop, _bgBottom],
+          ),
+        ),
+        child: SafeArea(
+          child: ListenableBuilder(
+            listenable: _conn,
+            builder: (context, _) => ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
               children: [
-                BTRoundButton(
-                  icon: Icons.arrow_back,
-                  onTap: () => Navigator.of(context).maybePop(),
-                ),
-                const Expanded(
-                  child: Column(
+                // Header
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: Row(
                     children: [
-                      BTMono('STEP 1 OF 2', color: BT.blue, size: 10),
-                      SizedBox(height: 2),
-                      Text('Pair New Device',
-                          style: TextStyle(
-                              color: BT.text,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800)),
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).maybePop(),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.arrow_back,
+                              color: _ink, size: 20),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      const Text(
+                        'Pair a bike',
+                        style: TextStyle(
+                          color: _ink,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const BTChip('BLE 5.2', dot: true),
-              ],
-            ),
-            const SizedBox(height: 18),
 
-            // Bike hero
-            BTPanel(
-              padding: const EdgeInsets.fromLTRB(12, 18, 12, 12),
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: 120,
-                    width: double.infinity,
-                    child: CustomPaint(painter: _BikeLinePainter()),
+                // Problem (Bluetooth off / permission) or scan status
+                if (_problemCard() case final p?) ...[
+                  p,
+                  const SizedBox(height: 14),
+                ] else
+                  _ScanStatus(scanning: _scanning, count: devices.length),
+                const SizedBox(height: 14),
+
+                // Devices
+                if (devices.isEmpty && !_scanning && _conn.problem == BikeProblem.none)
+                  const _EmptyState()
+                else
+                  for (final r in devices) ...[
+                    _DeviceCard(
+                      name: _nameOf(r),
+                      address: r.device.remoteId.str,
+                      rssi: r.rssi,
+                      bars: _bars(r.rssi),
+                      quality: _quality(r.rssi),
+                      likely: _looksLikeTracker(r),
+                      connecting: _connectingId == r.device.remoteId.str,
+                      enabled: _connectingId == null,
+                      onConnect: () => _pair(r),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                const SizedBox(height: 6),
+                FilledButton(
+                  onPressed: (_scanning || _connectingId != null) ? null : _scan,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _ink,
+                    foregroundColor: _accent,
+                    disabledBackgroundColor: _ink.withValues(alpha: 0.6),
+                    disabledForegroundColor: _accent,
+                    minimumSize: const Size.fromHeight(56),
+                    shape: const StadiumBorder(),
+                    textStyle: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700),
                   ),
-                  const SizedBox(height: 10),
-                  const BTChip('LOC: LAC 2, TUNIS (TN)', icon: Icons.place),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-
-            // Scan button
-            BTGlowButton(
-              label: _scanning ? 'Scanning...' : 'Scan for your tracker',
-              icon: Icons.bluetooth_searching,
-              leading: _scanning
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2.2, color: BT.onGreen))
-                  : Container(
-                      width: 10,
-                      height: 10,
-                      decoration: const BoxDecoration(
-                          color: BT.onGreen, shape: BoxShape.circle)),
-              onTap: _scanning ? null : _scan,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                        color: _lime, shape: BoxShape.circle)),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('Scanning nearby (2.4 GHz BLE)',
-                      style: TextStyle(color: BT.muted, fontSize: 12)),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_scanning)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.2, color: _accent),
+                        )
+                      else
+                        const Icon(Icons.bluetooth_searching, size: 19),
+                      const SizedBox(width: 10),
+                      Text(_scanning ? 'Scanning...' : 'Scan again'),
+                    ],
+                  ),
                 ),
-                const BTChip('3 trackers detected', bg: BT.paleLime),
+                const SizedBox(height: 18),
+                const _TipCard(),
               ],
             ),
-            const SizedBox(height: 16),
-
-            for (final t in _found) ...[
-              t.battery != null ? _primaryCard(t) : _simpleCard(t),
-              const SizedBox(height: 12),
-            ],
-
-            // Tip
-            BTPanel(
-              color: const Color(0xFFEAF2FF),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: BT.blue.withAlpha(30),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.lightbulb_outline,
-                        color: BT.blue, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        BTMono('PAIRING TIP', color: BT.blue, size: 10),
-                        SizedBox(height: 6),
-                        Text.rich(
-                          TextSpan(
-                            style: TextStyle(
-                                color: BT.text, fontSize: 13, height: 1.45),
-                            children: [
-                              TextSpan(text: 'Make sure your bike is within '),
-                              TextSpan(
-                                  text: '10 meters',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.w800)),
-                              TextSpan(
-                                  text:
-                                      '. Spin the front wheel once to wake up the internal dynamo sensor and transmit telemetry bursts.'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _iconBox(IconData i, {bool weak = false}) => Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: BT.panel2,
-          borderRadius: BorderRadius.circular(12),
+  Widget? _problemCard() {
+    final (title, text, action) = switch (_conn.problem) {
+      BikeProblem.bluetoothOff => (
+          'Bluetooth is off',
+          'Turn it on to look for your bike.',
+          'Turn on'
         ),
-        child: Icon(i, color: weak ? BT.muted : _lime, size: 22),
-      );
+      BikeProblem.permissionDenied => (
+          'Bluetooth permission needed',
+          'Allow nearby devices so the app can find your bike.',
+          'Allow'
+        ),
+      BikeProblem.permissionBlocked => (
+          'Permission blocked',
+          'Open the app settings and allow "Nearby devices".',
+          'Open settings'
+        ),
+      BikeProblem.unsupported => (
+          'Bluetooth not available',
+          'This phone does not support Bluetooth Low Energy.',
+          null
+        ),
+      BikeProblem.none => (null, null, null),
+    };
+    if (title == null) return null;
 
-  Widget _signal(int bars, {bool weak = false}) => Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(4, (i) {
-          final on = i < bars;
-          return Container(
-            width: 3.5,
-            height: 5.0 + i * 3,
-            margin: const EdgeInsets.only(right: 2),
-            decoration: BoxDecoration(
-              color: on ? (weak ? BT.muted : _lime) : BT.track,
-              borderRadius: BorderRadius.circular(1),
-            ),
-          );
-        }),
-      );
-
-  Widget _primaryCard(_Tracker t) {
-    final connecting = _connecting == t.name;
-    return BTPanel(
-      color: const Color(0xFFF6FFD6),
-      borderColor: _lime.withAlpha(60),
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(26),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _iconBox(t.icon),
-              const SizedBox(width: 12),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                    color: _ink, shape: BoxShape.circle),
+                child: const Icon(Icons.bluetooth_disabled,
+                    color: _accent, size: 22),
+              ),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(t.name,
+                    Text(title,
                         style: const TextStyle(
-                            color: BT.text,
-                            fontSize: 16,
+                            color: _ink,
+                            fontSize: 16.5,
                             fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 4),
-                    BTMono('MAC: ${t.mac}', size: 10),
+                    const SizedBox(height: 3),
+                    Text(text!,
+                        style: const TextStyle(
+                            color: _muted, fontSize: 13.5, height: 1.35)),
                   ],
                 ),
               ),
-              if (connecting)
-                const BTChip('Connecting...', dot: true)
-              else
-                _connectBtn(t),
             ],
           ),
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-            decoration: BoxDecoration(
-              color: BT.inset,
-              borderRadius: BorderRadius.circular(14),
+          if (action != null) ...[
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () async {
+                await _conn.fixProblem();
+                if (mounted && _conn.problem == BikeProblem.none) _scan();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: _ink,
+                foregroundColor: _accent,
+                minimumSize: const Size.fromHeight(50),
+                shape: const StadiumBorder(),
+                textStyle: const TextStyle(
+                    fontSize: 15.5, fontWeight: FontWeight.w700),
+              ),
+              child: Text(action),
             ),
-            child: Row(
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// Pieces
+// ===========================================================================
+
+class _ScanStatus extends StatelessWidget {
+  const _ScanStatus({required this.scanning, required this.count});
+  final bool scanning;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: scanning ? const Color(0xFF3FA34D) : _muted,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            scanning ? 'Looking for nearby devices...' : 'Scan finished',
+            style: const TextStyle(color: _muted, fontSize: 13.5),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.8),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(
+            count == 1 ? '1 device' : '$count devices',
+            style: const TextStyle(
+              color: _ink,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(26),
+      ),
+      child: const Column(
+        children: [
+          Icon(Icons.bluetooth_searching, color: _muted, size: 34),
+          SizedBox(height: 12),
+          Text('No device found',
+              style: TextStyle(
+                  color: _ink, fontSize: 16.5, fontWeight: FontWeight.w800)),
+          SizedBox(height: 4),
+          Text(
+            'Wake your bike up, get close to it and scan again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _muted, fontSize: 13.5, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceCard extends StatelessWidget {
+  const _DeviceCard({
+    required this.name,
+    required this.address,
+    required this.rssi,
+    required this.bars,
+    required this.quality,
+    required this.likely,
+    required this.connecting,
+    required this.enabled,
+    required this.onConnect,
+  });
+
+  final String name;
+  final String address;
+  final int rssi;
+  final int bars;
+  final String quality;
+  final bool likely; // the name looks like our tracker
+  final bool connecting;
+  final bool enabled;
+  final VoidCallback onConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: likely ? 0.95 : 0.8),
+        borderRadius: BorderRadius.circular(26),
+        border: likely
+            ? Border.all(color: _accent, width: 1.5)
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: likely ? _ink : _sage.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              likely ? Icons.pedal_bike : Icons.bluetooth,
+              color: likely ? _accent : _ink,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _stat(_signal(t.bars), '${t.rssi} dBm', t.quality),
-                _div(),
-                _stat(const Icon(Icons.bolt, color: _lime, size: 16),
-                    '${t.battery}%', 'Dynamo charged'),
-                _div(),
-                _stat(const Icon(Icons.navigation, color: BT.blue, size: 15),
-                    t.distance!, ''),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  address,
+                  style: const TextStyle(
+                      color: _muted, fontSize: 11.5, letterSpacing: 0.3),
+                ),
+                const SizedBox(height: 7),
+                Row(
+                  children: [
+                    _SignalBars(bars: bars),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$quality · $rssi dBm',
+                      style: const TextStyle(color: _muted, fontSize: 12),
+                    ),
+                  ],
+                ),
               ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          connecting
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.4, color: _ink),
+                )
+              : GestureDetector(
+                  onTap: enabled ? onConnect : null,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: enabled ? _ink : _ink.withValues(alpha: 0.35),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'Pair',
+                      style: TextStyle(
+                        color: _accent,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SignalBars extends StatelessWidget {
+  const _SignalBars({required this.bars});
+  final int bars;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(4, (i) {
+        return Container(
+          width: 3.5,
+          height: 5.0 + i * 3,
+          margin: const EdgeInsets.only(right: 2),
+          decoration: BoxDecoration(
+            color: i < bars ? _ink : _sage,
+            borderRadius: BorderRadius.circular(1),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _TipCard extends StatelessWidget {
+  const _TipCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _accent.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(26),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lightbulb_outline, color: _ink, size: 22),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                style: TextStyle(color: _ink, fontSize: 13.5, height: 1.45),
+                children: [
+                  TextSpan(
+                    text: 'Pairing tip. ',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  TextSpan(
+                    text:
+                        'Stay within 10 meters of your bike. If it is asleep, move it a little to wake it up, then scan again.',
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _stat(Widget lead, String top, String sub) => Expanded(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            lead,
-            const SizedBox(width: 6),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(top,
-                    style: const TextStyle(
-                        color: BT.text,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800)),
-                if (sub.isNotEmpty)
-                  Text(sub,
-                      style: const TextStyle(
-                          color: BT.muted, // Fixed: was BT.ink
-                          fontSize: 9.5)),
-              ],
-            ),
-          ],
-        ),
-      );
-
-  Widget _div() => Container(width: 1, height: 28, color: BT.track);
-
-  Widget _simpleCard(_Tracker t) => BTPanel(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            _iconBox(t.icon, weak: t.weak),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(t.name,
-                      style: TextStyle(
-                          color: t.weak ? BT.muted : BT.text,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      _signal(t.bars, weak: t.weak),
-                      const SizedBox(width: 8),
-                      BTMono('${t.rssi} dBm • ${t.quality}', size: 10),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            _connectBtn(t),
-          ],
-        ),
-      );
-
-  Widget _connectBtn(_Tracker t) => TextButton(
-        onPressed: t.weak ? null : () => _connect(t),
-        style: TextButton.styleFrom(
-          backgroundColor: BT.panel2,
-          foregroundColor: BT.text,
-          disabledForegroundColor: BT.muted,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-        ),
-        child: const Text('Connect',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-      );
-}
-
-class _BikeLinePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    final r = size.height * 0.36;
-    final lw = Offset(c.dx - size.width * 0.27, c.dy + r * 0.3);
-    final rw = Offset(c.dx + size.width * 0.27, c.dy + r * 0.3);
-
-    final ring = Paint()
-      ..color = Colors.black.withAlpha(30)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(lw, r, ring);
-    canvas.drawCircle(rw, r, ring);
-
-    final frame = Paint()
-      ..color = BT.text
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final bb = Offset(c.dx, c.dy + r * 0.3);
-    final seat = Offset(c.dx - size.width * 0.1, c.dy - r * 0.7);
-    final head = Offset(c.dx + size.width * 0.17, c.dy - r * 0.7);
-    final path = Path()
-      ..moveTo(lw.dx, lw.dy)
-      ..lineTo(seat.dx, seat.dy)
-      ..lineTo(head.dx, head.dy)
-      ..lineTo(rw.dx, rw.dy)
-      ..moveTo(seat.dx, seat.dy)
-      ..lineTo(bb.dx, bb.dy)
-      ..lineTo(head.dx, head.dy)
-      ..moveTo(bb.dx, bb.dy)
-      ..lineTo(lw.dx, lw.dy);
-    canvas.drawPath(path, frame);
-
-    final blue = Paint()
-      ..color = BT.blue
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(seat.dx - 12, seat.dy - 8),
-        Offset(seat.dx + 8, seat.dy - 8), blue);
-    canvas.drawLine(Offset(head.dx - 4, head.dy - 10),
-        Offset(head.dx + 14, head.dy - 16), blue);
-
-    // Tracker node
-    canvas.drawCircle(bb, 14, Paint()..color = _lime.withAlpha(150));
-    canvas.drawCircle(bb, 6, Paint()..color = BT.text); // Fixed: was BT.ink
-    canvas.drawCircle(bb, 2.5, Paint()..color = BT.bg);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
