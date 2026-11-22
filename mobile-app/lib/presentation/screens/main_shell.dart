@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../widgets/bike_ui.dart';
-import 'dashboard_screen.dart';
 import 'map_screen.dart';
-import 'trips_screen.dart';
+import 'ride_screen.dart';
 import 'settings_screen.dart';
+import 'trips_screen.dart';
 
-const Color _lime = Color(0xFFB4FF39);
+// Same soft palette as the other screens
+const Color _bgBottom = Color(0xFFDDE9D1);
+const Color _ink = Color(0xFF1E2B1C);
+const Color _muted = Color(0xFF6F7D6A);
+const Color _accent = Color(0xFFB6E35C);
 
-/// Bottom navigation shell: Home / Map / Trips / Settings.
+/// Bottom navigation shell: Ride / Map / Trips / Settings.
 /// Navigate here after sign-in:
 ///   Navigator.of(context).pushReplacement(
 ///     MaterialPageRoute(builder: (_) => const MainShell()));
@@ -23,7 +26,7 @@ class _MainShellState extends State<MainShell> {
   int _tab = 0;
 
   static const _items = [
-    (Icons.home_outlined, Icons.home, 'Home'),
+    (Icons.speed_outlined, Icons.speed, 'Ride'),
     (Icons.near_me_outlined, Icons.near_me, 'Map'),
     (Icons.route_outlined, Icons.route, 'Trips'),
     (Icons.tune, Icons.tune, 'Settings'),
@@ -32,7 +35,7 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      const DashboardScreen(),
+      const RideScreen(),
       const MapScreen(),
       const TripsScreen(),
       const SettingsScreen(),
@@ -41,46 +44,59 @@ class _MainShellState extends State<MainShell> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: BT.bg,
+        backgroundColor: _bgBottom,
         body: IndexedStack(index: _tab, children: pages),
         bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: BT.border)),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.92),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            boxShadow: [
+              BoxShadow(
+                color: _ink.withValues(alpha: 0.08),
+                blurRadius: 24,
+                offset: const Offset(0, -6),
+              ),
+            ],
           ),
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 64,
+              height: 72,
               child: Row(
                 children: List.generate(_items.length, (i) {
                   final on = i == _tab;
                   final it = _items[i];
                   return Expanded(
-                    child: InkWell(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => setState(() => _tab = i),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 18, vertical: 5),
+                                horizontal: 20, vertical: 6),
                             decoration: BoxDecoration(
-                              color: on ? _lime : Colors.transparent, // Fixed BT.green
-                              borderRadius: BorderRadius.circular(14),
+                              color: on ? _ink : Colors.transparent,
+                              borderRadius: BorderRadius.circular(18),
                             ),
-                            child: Icon(on ? it.$2 : it.$1,
-                                size: 22, color: on ? BT.onGreen : BT.muted),
+                            child: Icon(
+                              on ? it.$2 : it.$1,
+                              size: 22,
+                              color: on ? _accent : _muted,
+                            ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(it.$3,
-                              style: TextStyle(
-                                fontFamily: kMono,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w700,
-                                color: on ? _lime : BT.muted, // Fixed BT.ink
-                              )),
+                          const SizedBox(height: 3),
+                          Text(
+                            it.$3,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: on ? FontWeight.w800 : FontWeight.w600,
+                              color: on ? _ink : _muted,
+                            ),
+                          ),
                         ],
                       ),
                     ),
