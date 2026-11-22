@@ -60,6 +60,11 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define BLE_IRQ_Pin GPIO_PIN_6
 #define BLE_IRQ_GPIO_Port GPIOE
+#define BLE_IRQ_EXTI_IRQn EXTI9_5_IRQn
+#define SD_CS_Pin GPIO_PIN_2
+#define SD_CS_GPIO_Port GPIOA
+#define App_MotionFromISR_Pin GPIO_PIN_0
+#define App_MotionFromISR_GPIO_Port GPIOB
 #define BLE_CS_Pin GPIO_PIN_13
 #define BLE_CS_GPIO_Port GPIOD
 #define BLE_RESET_Pin GPIO_PIN_8
