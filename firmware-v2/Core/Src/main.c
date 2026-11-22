@@ -18,22 +18,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
-#include "hci_tl.h"
-#include "hci_le.h"
-#include "hci_const.h"
-#include "bluenrg_gap.h"
-#include "bluenrg_gap_aci.h"
-#include "bluenrg_gatt_aci.h"
-#include "bluenrg_hal_aci.h"
-#include "bluenrg_utils.h"
-#include "nmea_parser.h"
-#include "record.h"
-#include "track.h"
+#include "app_rtos.h"
+#include "ble_service.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,7 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define SIMULATE_GPS 0   /* 1 = FAKE moving position for indoor tests. Keep 0 for real use. */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,18 +45,22 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
+
+SPI_HandleTypeDef hspi1;
+
 UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart1;
 
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* USER CODE BEGIN PV */
 uint8_t gps_byte;
-uint16_t gpsServHandle, gpsCharHandle, distCharHandle;
-volatile uint8_t ble_connected = 0;
-uint16_t ble_conn_handle = 0;
-static NmeaLine_t nmea_line;
-static char ready_line[NMEA_MAX_LEN];
-static volatile uint8_t line_ready = 0;
-static Track_t trk;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,13 +68,12 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_UART4_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_RTC_Init(void);
+void StartDefaultTask(void *argument);
+
 /* USER CODE BEGIN PFP */
-void user_notify(void *pData);
-void HCI_Event_CB(void *pData);
-static void BLE_Setup(void);
-static void BLE_SendRecord(const GpsRecord_t *r);
-static void BLE_SendDistance(uint32_t meters);
-static void process_fix(const GpsData_t *gps);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -116,18 +112,60 @@ int main(void)
   MX_GPIO_Init();
   MX_UART4_Init();
   MX_USART1_UART_Init();
+  MX_SPI1_Init();
+  MX_RTC_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-    const char msg[] = "Bike Tracker v2: boot OK\r\n";
-    HAL_UART_Transmit(&huart1, (uint8_t *)msg, sizeof(msg) - 1, 100);
 
-    hci_init(user_notify, NULL);
-    hci_reset();
-    HAL_Delay(100);
+  App_Log("Bike Tracker v2 (FreeRTOS): boot OK\r\n");
 
-    BLE_Setup();
+  /* Interrupt priorities. A bigger number = LESS urgent.
+     - The HAL tick (TIM6) must be able to interrupt every other interrupt.
+     - Interrupts that call FreeRTOS FromISR functions must have priority 5 or higher. */
 
-    HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
+  HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 6, 0);
+
+  BLE_Init();
+
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  App_RTOS_Init();
+
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -136,60 +174,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    hci_user_evt_proc();
 
-    static uint32_t last_fix_tick = 0;
-
-    /* A complete NMEA line arrived from the GPS */
-    if (line_ready)
-    {
-      GpsData_t gps;
-
-      if (nmea_parse_rmc(ready_line, &gps))
-      {
-        process_fix(&gps);
-        last_fix_tick = HAL_GetTick();
-      }
-      else if (strncmp(ready_line + 3, "RMC", 3) == 0)
-      {
-        const char nf[] = "NO FIX\r\n";
-        HAL_UART_Transmit(&huart1, (uint8_t *)nf, sizeof(nf) - 1, 100);
-      }
-      line_ready = 0;
-    }
-
-    /* Signal lost for 5 s: restart the path so no phantom distance is added */
-    if (trk.have && (HAL_GetTick() - last_fix_tick) > 5000)
-    {
-      track_lost(&trk);
-    }
-
-#if SIMULATE_GPS
-    /* FAKE data for indoor tests only: moves about 10 m north every second */
-    {
-      static uint32_t t_sim = 0;
-      static int32_t  sim_lat = 36800000;
-      if ((HAL_GetTick() - t_sim) >= 1000)
-      {
-        t_sim = HAL_GetTick();
-        sim_lat += 90;
-        GpsData_t g = {0};
-        uint32_t s = HAL_GetTick() / 1000u;
-        g.valid = true;
-        g.year = 2026; g.month = 11; g.day = 9;
-        g.hour = (uint8_t)((s / 3600u) % 24u);
-        g.minute = (uint8_t)((s / 60u) % 60u);
-        g.second = (uint8_t)(s % 60u);
-        g.lat_e6 = sim_lat;
-        g.lon_e6 = 10180000;
-        g.speed_dkmh = 360;               /* 36 km/h */
-        process_fix(&g);
-        last_fix_tick = HAL_GetTick();
-      }
-    }
-#endif
-    /* USER CODE END 3 */
-  }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -208,10 +194,16 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
+
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = 0;
   RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
@@ -240,6 +232,114 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+  /** Enable MSI Auto calibration
+  */
+  HAL_RCCEx_EnableMSIPLLMode();
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* USER CODE BEGIN Check_RTC_BKUP */
+
+  /* USER CODE END Check_RTC_BKUP */
+
+  /** Initialize RTC and set the Time and Date
+  */
+  sTime.Hours = 0;
+  sTime.Minutes = 0;
+  sTime.Seconds = 0;
+  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sDate.WeekDay = RTC_WEEKDAY_MONDAY;
+  sDate.Month = RTC_MONTH_JANUARY;
+  sDate.Date = 1;
+  sDate.Year = 0;
+
+  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 7;
+  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
 }
 
 /**
@@ -333,6 +433,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(BLE_CS_GPIO_Port, BLE_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
@@ -356,15 +459,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BLE_IRQ_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC13 PC14 PC15 PC0
-                           PC1 PC2 PC3 PC4
-                           PC5 PC6 PC7 PC8
-                           PC9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_0
-                          |GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3|GPIO_PIN_4
-                          |GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8
-                          |GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
@@ -374,24 +471,45 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA2 PA3 PA4 PA5
-                           PA6 PA7 PA9 PA10
+  /*Configure GPIO pins : PC0 PC1 PC2 PC3
+                           PC4 PC5 PC6 PC7
+                           PC8 PC9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3
+                          |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7
+                          |GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SD_CS_Pin */
+  GPIO_InitStruct.Pin = SD_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(SD_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PA3 PA4 PA9 PA10
                            PA11 PA12 PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5
-                          |GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_9|GPIO_PIN_10
+  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_9|GPIO_PIN_10
                           |GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB0 PB1 PB2 PB10
-                           PB11 PB12 PB13 PB14
-                           PB15 PB3 PB4 PB5
-                           PB8 PB9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_10
-                          |GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14
-                          |GPIO_PIN_15|GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5
-                          |GPIO_PIN_8|GPIO_PIN_9;
+  /*Configure GPIO pin : App_MotionFromISR_Pin */
+  GPIO_InitStruct.Pin = App_MotionFromISR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(App_MotionFromISR_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB1 PB2 PB10 PB11
+                           PB12 PB13 PB14 PB15
+                           PB3 PB4 PB5 PB8
+                           PB9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_10|GPIO_PIN_11
+                          |GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15
+                          |GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_8
+                          |GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -422,142 +540,86 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(BLE_RESET_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance == UART4)
-  {
-    if (nmea_line_feed(&nmea_line, (char)gps_byte) && !line_ready)
+    if (huart->Instance == UART4)
     {
-      strcpy(ready_line, nmea_line.buf);
-      line_ready = 1;
-      // --- ADD THIS LINE HERE ---
-      printf("RAW GPS: %s\r\n", ready_line);
+        App_GpsRxByteFromISR((char)gps_byte);
+        HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
     }
-    HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
-  }
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance == UART4)
-  {
-    HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
-  }
-}
-
-void user_notify(void *pData)
-{
-  HCI_Event_CB(pData);
-}
-
-/* ---------- One valid GPS fix: record, distance, BLE, log ---------- */
-static void process_fix(const GpsData_t *gps)
-{
-  GpsRecord_t rec;
-  char out[128];
-
-  record_make(gps, &rec);
-  track_update(&trk, gps);
-  BLE_SendRecord(&rec);
-  BLE_SendDistance((uint32_t)trk.total_m);
-
-  int n = snprintf(out, sizeof(out),
-                   "FIX ts=%lu lat=%ld lon=%ld v=%u d=%lum\r\n",
-                   (unsigned long)rec.ts, (long)rec.lat_e6, (long)rec.lon_e6,
-                   rec.speed_dkmh, (unsigned long)trk.total_m);
-  if (n > 0) HAL_UART_Transmit(&huart1, (uint8_t *)out, (uint16_t)n, 100);
-}
-
-/* ---------- BLE application ---------- */
-static const uint8_t GPS_SERV_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe0,0xf2,0x73,0xd9};
-static const uint8_t GPS_CHAR_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe1,0xf2,0x73,0xd9};
-static const uint8_t DIST_CHAR_UUID[16] = {0x66,0x9a,0x0c,0x20,0x00,0x08,0x96,0x9e,0xe2,0x11,0x9e,0xb1,0xe2,0xf2,0x73,0xd9};
-
-static void BLE_StartAdvertising(void)
-{
-  uint8_t local_name[] = { AD_TYPE_COMPLETE_LOCAL_NAME,
-                           'B','i','k','e','T','r','a','c','k','e','r' };
-  tBleStatus st = aci_gap_set_discoverable(ADV_IND, 0, 0, PUBLIC_ADDR,
-                                           NO_WHITE_LIST_USE,
-                                           sizeof(local_name), (char *)local_name,
-                                           0, NULL, 0, 0);
-  char t[32];
-  int n = snprintf(t, sizeof(t), "advertise status=0x%02X\r\n", st);
-  HAL_UART_Transmit(&huart1, (uint8_t *)t, (uint16_t)n, 100);
-}
-
-static void BLE_Setup(void)
-{
-  uint16_t gap_serv, dev_name, appearance;
-  char txt[64];
-
-  uint8_t bdaddr[6] = {0x01,0x02,0x03,0x04,0x05,0xC0};
-  aci_hal_write_config_data(0x00, 6, bdaddr);
-  aci_gatt_init();
-  aci_gap_init_IDB05A1(GAP_PERIPHERAL_ROLE_IDB05A1, 0, 12, &gap_serv, &dev_name, &appearance);
-  aci_gatt_update_char_value(gap_serv, dev_name, 0, 11, (uint8_t *)"BikeTracker");
-
-  /* 7 attributes: 1 service + 3 for the record characteristic + 3 for the distance one */
-  tBleStatus s1 = aci_gatt_add_serv(UUID_TYPE_128, GPS_SERV_UUID, PRIMARY_SERVICE, 7, &gpsServHandle);
-  tBleStatus s2 = aci_gatt_add_char(gpsServHandle, UUID_TYPE_128, GPS_CHAR_UUID, 16,
-                                    CHAR_PROP_NOTIFY | CHAR_PROP_READ, ATTR_PERMISSION_NONE,
-                                    GATT_DONT_NOTIFY_EVENTS, 16, 0, &gpsCharHandle);
-  tBleStatus s3 = aci_gatt_add_char(gpsServHandle, UUID_TYPE_128, DIST_CHAR_UUID, 4,
-                                    CHAR_PROP_NOTIFY | CHAR_PROP_READ, ATTR_PERMISSION_NONE,
-                                    GATT_DONT_NOTIFY_EVENTS, 16, 0, &distCharHandle);
-  BLE_StartAdvertising();
-
-  snprintf(txt, sizeof(txt), "BLE ready: serv=%02X rec=%02X dist=%02X\r\n", s1, s2, s3);
-  HAL_UART_Transmit(&huart1, (uint8_t *)txt, strlen(txt), 100);
-}
-
-static void BLE_SendRecord(const GpsRecord_t *r)
-{
-  aci_gatt_update_char_value(gpsServHandle, gpsCharHandle, 0, 16, (uint8_t *)r);
-}
-
-static void BLE_SendDistance(uint32_t meters)
-{
-  aci_gatt_update_char_value(gpsServHandle, distCharHandle, 0, 4, (uint8_t *)&meters);
-}
-
-void HCI_Event_CB(void *pData)
-{
-  hci_uart_pckt *p = (hci_uart_pckt *)pData;
-  if (p->type != HCI_EVENT_PKT) return;
-  hci_event_pckt *e = (hci_event_pckt *)p->data;
-
-  if (e->evt == EVT_DISCONN_COMPLETE)
-  {
-    ble_connected = 0;
-    BLE_StartAdvertising();
-  }
-  else if (e->evt == EVT_LE_META_EVENT)
-  {
-    evt_le_meta_event *m = (evt_le_meta_event *)e->data;
-    if (m->subevent == EVT_LE_CONN_COMPLETE)
+    if (huart->Instance == UART4)
     {
-      evt_le_connection_complete *c = (evt_le_connection_complete *)m->data;
-      ble_conn_handle = c->handle;
-      ble_connected = 1;
+        HAL_UART_Receive_IT(&huart4, &gps_byte, 1);
     }
-  }
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  if (GPIO_Pin == GPIO_PIN_6)
-  {
-    hci_tl_lowlevel_isr();
-  }
+    if (GPIO_Pin == GPIO_PIN_13)
+    {
+        App_MotionFromISR();
+    }
 }
+
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
