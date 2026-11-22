@@ -66,4 +66,25 @@ class AuthRepository {
     final d = await _api.send('GET', '/me', auth: true) as Map<String, dynamic>;
     return AppUser.fromJson(d);
   }
+
+  /// POST /me/change-password
+  /// The server revokes every refresh token, so we also sign out locally.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _api.send('POST', '/me/change-password', auth: true, data: {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+    _api.accessToken = null;
+    await _storage.clear();
+  }
+
+  /// DELETE /me (the server deletes the account, its rides and its tokens).
+  Future<void> deleteAccount({required String password}) async {
+    await _api.send('DELETE', '/me', auth: true, data: {'password': password});
+    _api.accessToken = null;
+    await _storage.clear();
+  }
 }
