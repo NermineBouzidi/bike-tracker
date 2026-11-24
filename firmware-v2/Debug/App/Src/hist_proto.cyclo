@@ -1,0 +1,5 @@
+../App/Src/hist_proto.c:4:17:rd_u32	1
+../App/Src/hist_proto.c:9:13:wr_u32	1
+../App/Src/hist_proto.c:14:6:hp_parse_command	7
+../App/Src/hist_proto.c:34:9:hp_make_data	1
+../App/Src/hist_proto.c:42:9:hp_make_end	1

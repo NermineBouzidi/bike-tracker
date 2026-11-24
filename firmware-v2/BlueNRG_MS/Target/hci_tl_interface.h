@@ -25,7 +25,10 @@
 #endif
 
 /* Includes ------------------------------------------------------------------*/
-#include "b_l475e_iot01a2_bus.h"
+#include "stm32l4xx_hal.h"
+int32_t BSP_SPI3_Init(void);
+int32_t BSP_SPI3_SendRecv(uint8_t *tx, uint8_t *rx, uint16_t len);
+int32_t BSP_GetTick(void);
 
 /* Exported Defines ----------------------------------------------------------*/
 

@@ -24,7 +24,7 @@ FATFS USERFatFS;    /* File system object for USER logical drive */
 FIL USERFile;       /* File object for USER */
 
 /* USER CODE BEGIN Variables */
-
+extern RTC_HandleTypeDef hrtc;
 /* USER CODE END Variables */
 
 void MX_FATFS_Init(void)
@@ -45,7 +45,12 @@ void MX_FATFS_Init(void)
 DWORD get_fattime(void)
 {
   /* USER CODE BEGIN get_fattime */
-  return 0;
+	RTC_TimeTypeDef t;
+	RTC_DateTypeDef d;
+	HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
+	HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);
+	return ((DWORD)(d.Year + 20u) << 25) | ((DWORD)d.Month << 21) | ((DWORD)d.Date << 16)
+	     | ((DWORD)t.Hours << 11) | ((DWORD)t.Minutes << 5) | ((DWORD)t.Seconds >> 1);
   /* USER CODE END get_fattime */
 }
 

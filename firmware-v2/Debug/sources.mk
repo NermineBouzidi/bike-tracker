@@ -28,8 +28,16 @@ Core/Src \
 Core/Startup \
 Drivers/BSP/B-L475E-IOT01A2 \
 Drivers/STM32L4xx_HAL_Driver/Src \
+FATFS/App \
+FATFS/Target \
 Middlewares/ST/BlueNRG-MS/hci/controller \
 Middlewares/ST/BlueNRG-MS/hci \
 Middlewares/ST/BlueNRG-MS/hci/hci_tl_patterns/Basic \
 Middlewares/ST/BlueNRG-MS/utils \
+Middlewares/Third_Party/FatFs/src \
+Middlewares/Third_Party/FatFs/src/option \
+Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 \
+Middlewares/Third_Party/FreeRTOS/Source \
+Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F \
+Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang \
 

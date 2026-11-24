@@ -9,10 +9,18 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/subdir.mk
+-include Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/subdir.mk
+-include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/subdir.mk
+-include Middlewares/Third_Party/FreeRTOS/Source/subdir.mk
+-include Middlewares/Third_Party/FatFs/src/option/subdir.mk
+-include Middlewares/Third_Party/FatFs/src/subdir.mk
 -include Middlewares/ST/BlueNRG-MS/utils/subdir.mk
 -include Middlewares/ST/BlueNRG-MS/hci/hci_tl_patterns/Basic/subdir.mk
 -include Middlewares/ST/BlueNRG-MS/hci/controller/subdir.mk
 -include Middlewares/ST/BlueNRG-MS/hci/subdir.mk
+-include FATFS/Target/subdir.mk
+-include FATFS/App/subdir.mk
 -include Drivers/STM32L4xx_HAL_Driver/Src/subdir.mk
 -include Drivers/BSP/B-L475E-IOT01A2/subdir.mk
 -include Core/Startup/subdir.mk
@@ -67,8 +75,8 @@ all: main-build
 main-build: bike_tracker_fw-v2.elf secondary-outputs
 
 # Tool invocations
-bike_tracker_fw-v2.elf bike_tracker_fw-v2.map: $(OBJS) $(USER_OBJS) C:\Users\nermi\Documents\Projects-3ISEOC\bike-tracker\firmware-v2\STM32L475VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "bike_tracker_fw-v2.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\nermi\Documents\Projects-3ISEOC\bike-tracker\firmware-v2\STM32L475VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="bike_tracker_fw-v2.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+bike_tracker_fw-v2.elf bike_tracker_fw-v2.map: $(OBJS) $(USER_OBJS) C:\Users\hp\Documents\bike-tracker-backup_firmware_safety\bike-tracker-backup_firmware_safety\firmware-v2\STM32L475VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "bike_tracker_fw-v2.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\hp\Documents\bike-tracker-backup_firmware_safety\bike-tracker-backup_firmware_safety\firmware-v2\STM32L475VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="bike_tracker_fw-v2.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

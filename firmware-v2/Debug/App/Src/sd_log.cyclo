@@ -1,0 +1,15 @@
+../App/Src/sd_log.c:23:13:day_name	1
+../App/Src/sd_log.c:30:17:free_kb	2
+../App/Src/sd_log.c:38:13:make_room	12
+../App/Src/sd_log.c:62:5:SDLOG_Init	4
+../App/Src/sd_log.c:84:10:SDLOG_IsReady	1
+../App/Src/sd_log.c:85:10:SDLOG_BadRecords	1
+../App/Src/sd_log.c:87:6:SDLOG_Unmount	2
+../App/Src/sd_log.c:96:5:SDLOG_SelfTest	9
+../App/Src/sd_log.c:123:13:repair_tail	8
+../App/Src/sd_log.c:142:12:open_day	5
+../App/Src/sd_log.c:163:5:SDLOG_Append	9
+../App/Src/sd_log.c:185:6:SDLOG_Flush	2
+../App/Src/sd_log.c:192:6:SDLOG_Close	2
+../App/Src/sd_log.c:200:6:SDLOG_HistStart	3
+../App/Src/sd_log.c:213:10:SDLOG_HistNext	14

@@ -29,7 +29,6 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 #include "stm32l4xx_hal.h"
 
-#include "hci_tl_interface.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -63,8 +62,9 @@ void Error_Handler(void);
 #define BLE_IRQ_EXTI_IRQn EXTI9_5_IRQn
 #define SD_CS_Pin GPIO_PIN_2
 #define SD_CS_GPIO_Port GPIOA
-#define App_MotionFromISR_Pin GPIO_PIN_0
-#define App_MotionFromISR_GPIO_Port GPIOB
+#define MOTION_IN_Pin GPIO_PIN_11
+#define MOTION_IN_GPIO_Port GPIOD
+#define MOTION_IN_EXTI_IRQn EXTI15_10_IRQn
 #define BLE_CS_Pin GPIO_PIN_13
 #define BLE_CS_GPIO_Port GPIOD
 #define BLE_RESET_Pin GPIO_PIN_8

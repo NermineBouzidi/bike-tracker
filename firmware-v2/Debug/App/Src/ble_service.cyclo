@@ -1,0 +1,12 @@
+../App/Src/ble_service.c:34:13:start_advertising	1
+../App/Src/ble_service.c:43:6:BLE_SlowAdvertising	4
+../App/Src/ble_service.c:55:13:make_address	1
+../App/Src/ble_service.c:70:13:on_attribute_modified	3
+../App/Src/ble_service.c:84:13:hci_event_cb	10
+../App/Src/ble_service.c:124:6:BLE_Init	1
+../App/Src/ble_service.c:165:6:BLE_Process	2
+../App/Src/ble_service.c:175:6:BLE_IsConnected	1
+../App/Src/ble_service.c:177:6:BLE_SendRecord	1
+../App/Src/ble_service.c:182:6:BLE_SendDistance	1
+../App/Src/ble_service.c:187:9:BLE_SendHistFrame	1
+../App/Src/ble_service.c:192:6:BLE_TakeCommand	2

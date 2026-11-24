@@ -24,7 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "app_log.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,9 +49,31 @@
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-extern void App_RTOS_Init(void);
 
 /* USER CODE END FunctionPrototypes */
+
+/* Hook prototypes */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+void vApplicationMallocFailedHook(void);
+
+/* USER CODE BEGIN 4 */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+{
+  (void)xTask;
+  App_Log("\r\n!!! STACK OVERFLOW in task %s\r\n", (char *)pcTaskName);
+  __disable_irq();
+  while (1) { }
+}
+/* USER CODE END 4 */
+
+/* USER CODE BEGIN 5 */
+void vApplicationMallocFailedHook(void)
+{
+  App_Log("\r\n!!! OUT OF HEAP (raise TOTAL_HEAP_SIZE)\r\n");
+  __disable_irq();
+  while (1) { }
+}
+/* USER CODE END 5 */
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
